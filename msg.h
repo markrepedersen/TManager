@@ -1,5 +1,3 @@
-
-
 #ifndef MSG_H
 #define MSG_H 1
 #include <stdint.h>
@@ -25,6 +23,12 @@ enum cmdMsgKind {
     ABORT_CRASH,
     VOTE_ABORT
 };
+
+typedef struct {
+    uint32_t tid;
+    cmdMsgKind type;
+    uint32_t newValue;
+} managerType;
 
 // The following is not the best approach/format for the command messages
 // but it is simple and it will fit in one packet. Which fields have
