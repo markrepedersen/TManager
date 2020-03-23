@@ -1,9 +1,9 @@
                  University of British Columbia
-                 Department of Computer Science 
+                 Department of Computer Science
                          CPSC 416
                      Winter 2019, Term 2
 
-                      Assignment 3 
+                      Assignment 3
 
 
 
@@ -21,7 +21,7 @@ remaining person is to then pull the changes to their copy of the repo,
 add their personal information to the form and then commit and
 push the changes back to stash. Stash records who is responsible for
 the various commits, it is therefore very important that each of you
-submit this form from your own account. 
+submit this form from your own account.
 
 Adding the cover page is the last thing you are to do as part of the
 assignment submission process. If you make changes after submitting
@@ -31,9 +31,9 @@ file. If working in pairs both of you must do this.
 
 
 STUDENT  1
-Name :
-St. No:
-Email:
+Name : Kevin Wong
+St. No: 40396146
+Email: kevinwong56@hotmail.com
 
 
 STUDENT  2
