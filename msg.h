@@ -26,7 +26,7 @@ enum cmdMsgKind {
 
 typedef struct {
     uint32_t tid;
-    cmdMsgKind type;
+    uint32_t type;
     uint32_t newValue;
 } managerType;
 

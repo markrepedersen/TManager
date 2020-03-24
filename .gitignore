@@ -63,3 +63,8 @@ __MACOSX/
 
 
 **/.vscode
+TXworker_*.log
+TXMG_*.log
+tworker
+tmanager
+cmd

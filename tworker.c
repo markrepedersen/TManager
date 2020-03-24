@@ -72,6 +72,8 @@ void setup(int argc, char **argv) {
         printf("Initializing the log file size\n");
         struct logFile tx;
         bzero(&tx, sizeof(tx));
+        tx.initialized = 0;
+        tx.log.txState = WTX_NOTACTIVE;
         if (write(logfileFD, &tx, sizeof(tx)) != sizeof(tx)) {
             printf("Writing problem to log\n");
             exit(-1);
@@ -144,18 +146,34 @@ void flushLog() {
     }
 }
 
+void sendMessage(const managerType* message) {
+    // todo add host/port fields?
+}
+
+void* receivePacket(int sockfd, void* buf, int buflen) {
+    int res = recvfrom(sockfd, buf, buflen, MSG_DONTWAIT, NULL, NULL);
+    if (res == buflen) return buf;
+    if (res != -1) printf("Received packet with invalid size: %d\n", res);
+    else if (errno != EAGAIN && errno != EWOULDBLOCK) perror("Receive packet error");
+    return NULL;
+}
+
 /**
- * Check for incoming commands.
- * Returns a pointer to the command, or NULL if none was received.
+ * Check for incoming messages in a non-blocking fashion.
+ * Returns a pointer to the command, or NULL if none was present.
+ */
+const managerType* receiveMessage() {
+    static managerType message;
+    return receivePacket(txSock, &message, sizeof(message));
+}
+
+/**
+ * Check for incoming commands in a non-blocking fashion.
+ * Returns a pointer to the command, or NULL if none was present.
  */
 const msgType* receiveCommand() {
     static msgType command;
-    const int cmdSize = sizeof(command);
-    int res = recvfrom(cmdSock, &command, cmdSize, MSG_DONTWAIT, NULL, NULL);
-    if (res == cmdSize) return &command;
-    if (res != -1) printf("Received packet with invalid size: %d\n", res);
-    else if (errno != EAGAIN && errno != EWOULDBLOCK) perror("Receive cmd error");
-    return NULL;
+    return receivePacket(cmdSock, &command, sizeof(command));
 }
 
 const char* getCommandTypeString(int msgType) {
@@ -185,6 +203,18 @@ void printCommand(const msgType* command) {
     printf("str: %s\n", command->strData.newID);
 }
 
+void beginTransaction(const msgType* command) {
+    if (log->log.txState != WTX_NOTACTIVE) {
+        printf("Another transaction is currently ongoing (current status: %d).\n", log->log.txState);
+        return;
+    }
+
+    // todo
+    // Send begin to command->hostName : command->port with tid=command->tid
+    // Wait for manager to tell if the TID was OK.
+    // what to do if no response?
+}
+
 void handleCommand(const msgType* command) {
     if (!command) return;
     const int msgType = command->msgID;
@@ -195,6 +225,7 @@ void handleCommand(const msgType* command) {
     printCommand(command);
     switch (command->msgID) {
         case BEGINTX:
+            beginTransaction(command);
             break;
         case JOINTX:
             break;
