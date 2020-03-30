@@ -22,6 +22,7 @@ static int cmdSock;
 static int txSock;
 static struct addrinfo hints;
 static time_t maxResponseTime = 0, maxPollTime = 0;
+static int32_t delay = 0;
 
 inline static void setState(uint32_t state) {
 	log->log.txState = state;
@@ -195,6 +196,10 @@ static const char* getManagerTypeString(uint32_t msgType) {
 		"TXMSG_JOIN",
 		"TXMSG_TID_OK",
 		"TXMSG_TID_IN_USE",
+		"TXMSG_COMMIT_REQUEST",
+		"TXMSG_COMMIT_CRASH_REQUEST",
+		"TXMSG_ABORT_REQUEST",
+		"TXMSG_ABORT_CRASH_REQUEST",
 		"TXMSG_PREPARE_TO_COMMIT",
 		"TXMSG_VOTE_COMMIT",
 		"TXMSG_VOTE_ABORT",
@@ -303,6 +308,7 @@ static void handleCommand(const msgType* command) {
 			initiateTransaction(command);
 			break;
 		case JOINTX:
+			initiateTransaction(command);
 			break;
 		case NEW_A:
 			break;
@@ -311,6 +317,7 @@ static void handleCommand(const msgType* command) {
 		case NEW_IDSTR:
 			break;
 		case DELAY_RESPONSE:
+			delay = command->delay;
 			break;
 		case CRASH:
 			_exit(EXIT_SUCCESS);
