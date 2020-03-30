@@ -130,7 +130,7 @@ int receiveMessage(managerType *message, struct sockaddr_in *client) {
 
 int sendMessage(managerType *message, struct sockaddr_in *client) {
   int n = sendto(sockfd, message, sizeof(managerType), 0,
-                 (struct sockaddr *)client, client->sin_len);
+                 (struct sockaddr *)client, sizeof(struct sockaddr_in));
   if (n < 0) {
     perror("Sending error");
     abort();
@@ -187,6 +187,7 @@ void processAbortCrash(managerType *message, struct sockaddr_in *client) {
 }
 
 void processBegin(managerType *message, struct sockaddr_in *client) {
+  // Log BEGIN request
   if (isTransactionInUse(message->tid)) {
     message->type = TXMSG_TID_IN_USE;
     sendMessage(message, client);
@@ -197,6 +198,7 @@ void processBegin(managerType *message, struct sockaddr_in *client) {
 }
 
 void processJoin(managerType *message, struct sockaddr_in *client) {
+  // Log JOIN request
   if (!isTransactionInUse(message->tid)) {
     message->type = TXMSG_TID_OK;
     sendMessage(message, client);
@@ -205,11 +207,6 @@ void processJoin(managerType *message, struct sockaddr_in *client) {
     sendMessage(message, client);
   }
 }
-
-/* TXMSG_COMMIT_REQUEST -> send prepare to commit to all workers */
-/* TXMSG_COMMIT_CRASH_REQUEST -> log commit, then crash */
-/* TXMSG_ABORT_REQUEST -> send abort to all workers  */
-/* TXMSG_ABORT_CRASH_REQUEST -> log abort and crash */
 
 void processMessage(managerType *message, struct sockaddr_in *client) {
   receiveMessage(message, client);
