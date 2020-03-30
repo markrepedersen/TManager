@@ -128,9 +128,8 @@ int receiveMessage(managerType *message, struct sockaddr_in *client) {
   return n;
 }
 
-int sendMessage(struct sockaddr_in *client) {
-  managerType message;
-  int n = sendto(sockfd, &message, sizeof(managerType), 0,
+int sendMessage(managerType *message, struct sockaddr_in *client) {
+  int n = sendto(sockfd, message, sizeof(managerType), 0,
                  (struct sockaddr *)client, client->sin_len);
   if (n < 0) {
     perror("Sending error");
@@ -140,32 +139,77 @@ int sendMessage(struct sockaddr_in *client) {
   return n;
 }
 
-int isDuplicateTransaction(unsigned long tid) {
+int isTransactionInUse(unsigned long tid) {
   int isDuplicate = 0;
-  for (int i = 0; i < sizeof(txlog.transaction) / sizeof(txlog.transaction[0]);
-       i++) {
-    if (tid == txlog.transaction[i].txID) {
+  for (int i = 0;
+       i < sizeof(txlog->transaction) / sizeof(txlog->transaction[0]); i++) {
+    if (tid == txlog->transaction[i].txID) {
       isDuplicate = 1;
     }
   }
   return isDuplicate;
 }
 
+struct sockaddr_in *getWorkersByTransactionId(unsigned long tid) {
+  for (int i = 0;
+       i < sizeof(txlog->transaction) / sizeof(txlog->transaction[0]); i++) {
+    if (tid == txlog->transaction[i].txID) {
+      return txlog->transaction[i].worker;
+    }
+  }
+  return NULL;
+}
+
+void processCommit(managerType *message, struct sockaddr_in *client) {
+  // Log commit request
+  struct sockaddr_in *workers = getWorkersByTransactionId(message->tid);
+  for (int i = 0; i < sizeof(*workers) / sizeof(workers[0]); i++) {
+    sendMessage(message, &workers[i]);
+  }
+}
+
+void processCommitCrash(managerType *message, struct sockaddr_in *client) {
+  // Log commit request
+  abort();
+}
+
+void processAbort(managerType *message, struct sockaddr_in *client) {
+  // Log abort request
+  struct sockaddr_in *workers = getWorkersByTransactionId(message->tid);
+  for (int i = 0; i < sizeof(*workers) / sizeof(workers[0]); i++) {
+    sendMessage(message, &workers[i]);
+  }
+}
+
+void processAbortCrash(managerType *message, struct sockaddr_in *client) {
+  // Log abort request
+  abort();
+}
+
 void processBegin(managerType *message, struct sockaddr_in *client) {
-  if (isDuplicateTransaction(message->tid)) {
-    sendMessage(client);
+  if (isTransactionInUse(message->tid)) {
+    message->type = TXMSG_TID_IN_USE;
+    sendMessage(message, client);
   } else {
-    sendMessage(client);
+    message->type = TXMSG_TID_OK;
+    sendMessage(message, client);
   }
 }
 
 void processJoin(managerType *message, struct sockaddr_in *client) {
-  if (!isDuplicateTransaction(message->tid)) {
-    sendMessage(client);
+  if (!isTransactionInUse(message->tid)) {
+    message->type = TXMSG_TID_OK;
+    sendMessage(message, client);
   } else {
-    sendMessage(client);
+    message->type = TXMSG_TID_IN_USE;
+    sendMessage(message, client);
   }
 }
+
+/* TXMSG_COMMIT_REQUEST -> send prepare to commit to all workers */
+/* TXMSG_COMMIT_CRASH_REQUEST -> log commit, then crash */
+/* TXMSG_ABORT_REQUEST -> send abort to all workers  */
+/* TXMSG_ABORT_CRASH_REQUEST -> log abort and crash */
 
 void processMessage(managerType *message, struct sockaddr_in *client) {
   receiveMessage(message, client);
@@ -175,6 +219,18 @@ void processMessage(managerType *message, struct sockaddr_in *client) {
     break;
   case TXMSG_JOIN:
     processJoin(message, client);
+    break;
+  case TXMSG_COMMIT_REQUEST:
+    processCommit(message, client);
+    break;
+  case TXMSG_COMMIT_CRASH_REQUEST:
+    processCommitCrash(message, client);
+    break;
+  case TXMSG_ABORT_REQUEST:
+    processAbort(message, client);
+    break;
+  case TXMSG_ABORT_CRASH_REQUEST:
+    processAbortCrash(message, client);
     break;
   }
 }
@@ -191,7 +247,7 @@ int main(int argc, char **argv) {
 
     processMessage(&message, &client);
 
-    txlog.transaction[i].worker[0] = client;
+    txlog->transaction[i].worker[0] = client;
     // Make sure in memory copy is flushed to disk
     if (msync(&txlog, sizeof(struct transactionSet), MS_SYNC | MS_INVALIDATE)) {
       perror("Msync problem");
