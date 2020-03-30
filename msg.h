@@ -24,10 +24,21 @@ enum cmdMsgKind {
     VOTE_ABORT
 };
 
+enum txMsgKind {
+    TXMSG_BEGIN = 1000,
+    TXMSG_JOIN,
+    TXMSG_TID_OK,
+    TXMSG_TID_IN_USE,
+    TXMSG_PREPARE_TO_COMMIT,
+    TXMSG_VOTE_COMMIT,
+    TXMSG_VOTE_ABORT,
+    TXMSG_COMMITTED,
+    TXMSG_ABORTED
+};
+
 typedef struct {
     uint32_t tid;
     uint32_t type;
-    uint32_t newValue;
 } managerType;
 
 // The following is not the best approach/format for the command messages

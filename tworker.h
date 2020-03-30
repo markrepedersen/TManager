@@ -5,7 +5,8 @@
 
 #define MAX_NODES 10
 #define IDLEN 64
-
+#define RESPONSE_TIMEOUT 10
+#define DECISION_TIMEOUT 30
 // Feel free to modify anything in this file except the
 // struct transactionData
 
@@ -13,7 +14,11 @@ enum workerTxState {
     WTX_NOTACTIVE = 400,
     WTX_ABORTED,
     WTX_PREPARED,
-    WTX_COMMITTED
+    WTX_COMMITTED,
+    /*---added---*/
+    // make sure to update getManagerTypeString()
+    WTX_INITIATED,
+    WTX_IN_PROGRESS
 };
 
 struct transactionData {
