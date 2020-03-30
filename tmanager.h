@@ -29,6 +29,6 @@ int sockfd;
 unsigned long port;
 char logFileName[128];
 int logfileFD;
-struct transactionSet *txlog;
+struct transactionSet txlog;
 
 #endif

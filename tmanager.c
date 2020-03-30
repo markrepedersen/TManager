@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 1
+
 #include "tmanager.h"
 #include "msg.h"
 #include <arpa/inet.h>
@@ -114,8 +115,68 @@ void init(int argc, char **argv) {
   initTransactionLog();
 }
 
-void processRequest() {
-  // process joint
+int receiveMessage(managerType *message, struct sockaddr_in *client) {
+  socklen_t len;
+  int n = recvfrom(sockfd, message, sizeof(managerType), MSG_WAITALL,
+                   (struct sockaddr *)&client, &len);
+
+  if (n < 0) {
+    perror("Receiving error:");
+    abort();
+  }
+
+  return n;
+}
+
+int sendMessage(struct sockaddr_in *client) {
+  managerType message;
+  int n = sendto(sockfd, &message, sizeof(managerType), 0,
+                 (struct sockaddr *)client, client->sin_len);
+  if (n < 0) {
+    perror("Sending error");
+    abort();
+  }
+
+  return n;
+}
+
+int isDuplicateTransaction(unsigned long tid) {
+  int isDuplicate = 0;
+  for (int i = 0; i < sizeof(txlog.transaction) / sizeof(txlog.transaction[0]);
+       i++) {
+    if (tid == txlog.transaction[i].txID) {
+      isDuplicate = 1;
+    }
+  }
+  return isDuplicate;
+}
+
+void processBegin(managerType *message, struct sockaddr_in *client) {
+  if (isDuplicateTransaction(message->tid)) {
+    sendMessage(client);
+  } else {
+    sendMessage(client);
+  }
+}
+
+void processJoin(managerType *message, struct sockaddr_in *client) {
+  if (!isDuplicateTransaction(message->tid)) {
+    sendMessage(client);
+  } else {
+    sendMessage(client);
+  }
+}
+
+void processMessage(managerType *message, struct sockaddr_in *client) {
+  receiveMessage(message, client);
+  switch (message->type) {
+  case TXMSG_BEGIN:
+    processBegin(message, client);
+    break;
+  case TXMSG_JOIN:
+    processJoin(message, client);
+    break;
+  }
 }
 
 int main(int argc, char **argv) {
@@ -124,19 +185,15 @@ int main(int argc, char **argv) {
   int n;
   unsigned char buff[1024];
   for (int i = 0;; i = (++i % MAX_WORKERS)) {
+    managerType message;
     struct sockaddr_in client;
-    socklen_t len;
     bzero(&client, sizeof(client));
-    n = recvfrom(sockfd, buff, sizeof(buff), MSG_WAITALL,
-                 (struct sockaddr *)&client, &len);
-    if (n < 0) {
-      perror("Receiving error:");
-      abort();
-    }
-    printf("Got a packet\n");
-    txlog->transaction[i].worker[0] = client;
+
+    processMessage(&message, &client);
+
+    txlog.transaction[i].worker[0] = client;
     // Make sure in memory copy is flushed to disk
-    if (msync(txlog, sizeof(struct transactionSet), MS_SYNC | MS_INVALIDATE)) {
+    if (msync(&txlog, sizeof(struct transactionSet), MS_SYNC | MS_INVALIDATE)) {
       perror("Msync problem");
     }
   }

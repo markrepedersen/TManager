@@ -1,7 +1,7 @@
-
 #ifndef TWORKER_H
 #define TWORKER_H 1
 #include <sys/time.h>
+#include <netinet/in.h>
 
 #define MAX_NODES 10
 #define IDLEN 64
