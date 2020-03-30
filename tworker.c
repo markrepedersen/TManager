@@ -21,10 +21,14 @@ static struct logFile *log;
 static int cmdSock;
 static int txSock;
 static struct addrinfo hints;
-static time_t maxResponseTime = 0, maxPollTime = 0;
-static int32_t delay = 0;
+static time_t latestResponseTime = 0, rePollTime = 0;  // timeouts
+static time_t delayedResponseTime = 0;
+static enum txMsgKind delayedVoteValue = TXMSG_VOTE_COMMIT;
+static enum txMsgKind voteValue = TXMSG_VOTE_COMMIT;  // by default, commit
+static int crashAfterDelay = 0;
+static long delay = 0;
 
-inline static void setState(uint32_t state) {
+inline static void setState(enum workerTxState state) {
 	log->log.txState = state;
 }
 
@@ -204,6 +208,7 @@ static const char* getManagerTypeString(uint32_t msgType) {
 		"TXMSG_VOTE_COMMIT",
 		"TXMSG_VOTE_ABORT",
 		"TXMSG_COMMITTED",
+		"TXMSG_POLL_RESULT"
 		"TXMSG_ABORTED"
 	};
 	return names[msgType - TXMSG_BEGIN];
@@ -275,7 +280,23 @@ static void initiateTransaction(const msgType* command) {
 	uint32_t msgType = command->msgID == BEGINTX ? TXMSG_BEGIN : TXMSG_JOIN;
 	managerType msg = {command->tid, msgType};
 	sendMessage(&msg);
-	maxResponseTime = time(NULL) + RESPONSE_TIMEOUT;
+	latestResponseTime = time(NULL) + RESPONSE_TIMEOUT;
+}
+
+static void resetTimers() {
+	latestResponseTime = 0;
+	rePollTime = 0;
+	delayedResponseTime = 0;
+}
+
+static void commitTransaction() {
+	memcpy(&log->txData.IDstring, &log->log.newIDstring, IDLEN);
+	memcpy(&log->txData.B, &log->log.newB, sizeof(int));
+	memcpy(&log->txData.A, &log->log.newA, sizeof(int));
+	log->log.txState = WTX_NOTACTIVE;
+	log->log.oldSaved = 0;
+	flushLog();
+	resetTimers();
 }
 
 static void abortTransaction() {
@@ -288,11 +309,10 @@ static void abortTransaction() {
 	if ((log->log.oldSaved >> 2) & 1) {
 		memcpy(&log->txData.A, &log->log.oldA, sizeof(int));
 	}
-	maxResponseTime = 0;
-	maxPollTime = 0;
 	log->log.txState = WTX_NOTACTIVE;
 	log->log.oldSaved = 0;
 	flushLog();
+	resetTimers();
 }
 
 static void handleCommand(const msgType* command) {
@@ -349,45 +369,71 @@ static void handleMessage(const managerType* msg) {
 	switch (msg->type) {
 		case TXMSG_TID_OK:
 			if (currState() == WTX_INITIATED) {
-				maxResponseTime = 0;
+				latestResponseTime = 0;
 				setState(WTX_IN_PROGRESS);
 			}
 			break;
 		case TXMSG_TID_IN_USE:
 			if (currState() == WTX_INITIATED) {
-				maxResponseTime = 0;
+				latestResponseTime = 0;
 				// todo: do we do something w/ log here?
-				printf("TID %u already in use.\n", msg->tid);
+				printf("Bad TID %u\n", msg->tid);
 				exit(EXIT_FAILURE);
 			}
 			break;
 		case TXMSG_PREPARE_TO_COMMIT:
 			if (currState() == WTX_IN_PROGRESS) {
-				maxResponseTime = 0;
-				// todo: handle delays - push on to queue..
+				latestResponseTime = 0;
+				long waitTime = abs(delay);
+				delayedVoteValue = voteValue;
+				delayedResponseTime = time(NULL) + waitTime;
+				crashAfterDelay = delay < 0;
 			}
 			break;
 		case TXMSG_COMMITTED:
+			commitTransaction();
 			break;
 		case TXMSG_ABORTED:
+			abortTransaction();
 			break;
 		default:
 			printf("Unexpected message type received from manager.\n");
 	}
 }
 
+static void respondVote() {
+	setState(WTX_PREPARED);
+	flushLog();
+	if (crashAfterDelay) _exit(EXIT_SUCCESS);
+	const managerType msg = { log->log.txID, delayedVoteValue };
+	sendMessage(&msg);
+	rePollTime = time(NULL) + DECISION_TIMEOUT;
+}
+
 static void checkTimers() {
 	const time_t now = time(NULL);
-	if (maxResponseTime) {
-		if (now > maxResponseTime) {
+	if (latestResponseTime) {
+		if (now > latestResponseTime) {
 			printf("Response timeout for transaction %lu.\n", log->log.txID);
-			maxResponseTime = 0;
+			latestResponseTime = 0;
 			if (currState() == WTX_INITIATED) {
 				setState(WTX_NOTACTIVE);
-				// todo not sure if more needs to be done here
 			} else if (currState() == WTX_IN_PROGRESS) {
 				abortTransaction();
 			}
+		}
+	}
+	if (rePollTime) {
+		if (now > rePollTime) {
+			rePollTime = now + RESPONSE_TIMEOUT;
+			const managerType msg = { log->log.txID, TXMSG_POLL_RESULT };
+			sendMessage(&msg);
+		}
+	}
+	if (delayedResponseTime) {
+		if (now > delayedResponseTime) {
+			delayedResponseTime = 0;
+			respondVote();
 		}
 	}
 }
