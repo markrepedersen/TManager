@@ -120,7 +120,7 @@ void processArgs(int argc, char **argv) {
 }
 
 int receiveMessage(managerType *message, struct sockaddr_in *client) {
-  socklen_t len;
+  socklen_t len = sizeof(struct sockaddr_in);
   int n = recvfrom(sockfd, message, sizeof(managerType), MSG_DONTWAIT,
                    (struct sockaddr *)client, &len);
 
