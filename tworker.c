@@ -27,8 +27,28 @@ static enum txMsgKind voteValue = TXMSG_VOTE_COMMIT;  // by default, commit
 static int crashAfterDelay = 0;
 static long delay = 0;
 
+
+static void flushAll() {
+	if (!log->initialized) log->initialized = 1;
+	if (msync(log, sizeof(struct logFile), MS_SYNC | MS_INVALIDATE)) {
+		perror("Msync problem");
+		exit(-1);
+	}
+}
+
+// Flush changes to the log file.
+static void flushLog() {
+	flushAll();
+	// if (!log->initialized) log->initialized = 1;
+	// if (msync(&log->log, sizeof(struct transactionData), MS_SYNC | MS_INVALIDATE)) {
+	// 	perror("Msync problem");
+	// 	exit(-1);
+	// }
+}
+
 inline static void setWorkerState(enum workerTxState state) {
 	log->log.txState = state;
+	flushLog();
 }
 
 inline static uint32_t currState() {
@@ -87,7 +107,7 @@ static void setup(int argc, char **argv) {
 		printf("Initializing the log file size\n");
 		struct logFile tx;
 		bzero(&tx, sizeof(tx));
-		tx.initialized = 1;
+		tx.initialized = 0;
 		tx.log.txState = WTX_NOTACTIVE;
 		if (write(logfileFD, &tx, sizeof(tx)) != sizeof(tx)) {
 			printf("Writing problem to log\n");
@@ -144,23 +164,6 @@ static void setup(int argc, char **argv) {
 	printf("Log file name: %s\n", logFileName);
 }
 
-static void flushAll() {
-	if (!log->initialized) log->initialized = 1;
-	if (msync(log, sizeof(struct logFile), MS_SYNC | MS_INVALIDATE)) {
-		perror("Msync problem");
-		exit(-1);
-	}
-}
-
-// Flush changes to the log file.
-static void flushLog() {
-	if (!log->initialized) log->initialized = 1;
-	if (msync(&log->log, sizeof(struct transactionData), MS_SYNC | MS_INVALIDATE)) {
-		perror("Msync problem");
-		exit(-1);
-	}
-}
-
 static void* receivePacket(int sockfd, void* buf, int buflen, struct sockaddr* sender, socklen_t* addrLen) {
 	int res = recvfrom(sockfd, buf, buflen, MSG_DONTWAIT, sender, addrLen);
 	if (res == buflen) return buf;
@@ -175,7 +178,6 @@ static void* receivePacket(int sockfd, void* buf, int buflen, struct sockaddr* s
  */
 static const managerType* receiveMessage() {
 	static managerType message;
-	// todo: check sender?
 	return receivePacket(txSock, &message, sizeof(message), NULL, NULL);
 }
 
@@ -325,8 +327,8 @@ static void requestCommit(int crash) {
 		crash ? TXMSG_COMMIT_CRASH_REQUEST : TXMSG_COMMIT_REQUEST
 	};
 	sendMessage(&msg);
-	latestResponseTime = time(NULL) + RESPONSE_TIME_LIMIT;
-	setWorkerState(WTX_PREPARED);
+	// latestResponseTime = time(NULL) + RESPONSE_TIME_LIMIT;
+	// setWorkerState(WTX_PREPARED);
 }
 
 static void newValue(const void* src, void* logOld, void* logNew, void* realDst, int len, int bitInd) {
@@ -431,6 +433,7 @@ static void handleMessage(const managerType* msg) {
 				delayedVoteValue = voteValue;
 				delayedResponseTime = time(NULL) + waitTime;
 				crashAfterDelay = delay < 0;
+				setWorkerState(WTX_PREPARED);
 			}
 			break;
 		case TXMSG_COMMITTED:
@@ -462,9 +465,10 @@ static void checkTimers() {
 			if (currState() == WTX_INITIATED) {
 				// setWorkerState(WTX_IN_PROGRESS);  // FOR TESTING. TODO: REMOVE!!!
 				setWorkerState(WTX_NOTACTIVE);
-			} else if (currState() == WTX_PREPARED) {
-				abortTransaction();
 			}
+			// else if (currState() == WTX_PREPARED) {
+			// 	abortTransaction();
+			// }
 		}
 	}
 	if (rePollTime) {
@@ -484,11 +488,45 @@ static void checkTimers() {
 
 static void recover() {
 	if (!log->initialized) return;
+	switch (currState()) {
+		case WTX_NOTACTIVE:
+			break;
+		case WTX_ABORTED:
+			printf("Worker sent abort vote prior to crash. aborting now\n");
+			abortTransaction();
+			break;
+		case WTX_PREPARED:
+		case WTX_COMMITTED:
+			rePollTime = time(NULL) + RESPONSE_TIME_LIMIT;
+			const managerType msg = { log->log.txID, TXMSG_POLL_RESULT };
+			sendMessage(&msg);
+			break;
+		case WTX_INITIATED:
+		case WTX_IN_PROGRESS:
+			printf("Aborting since worker crashed\n");
+			requestAbort(0);
+			abortTransaction();
+			break;
+		default:
+			printf("Unknown state: %d\n", currState());
+	}
+}
+
+static void printValues() {
+	if (!log->initialized) printf("Log not initialized!!!\n");
+	else {
+		struct transactionData* dat = &log->txData;
+		struct workerLog* lg = &log->log;
+		printf("txData: A=%d, B=%d, id=%s\n", dat->A, dat->B, dat->IDstring);
+		printf("Log: tid=%lu, state=%d, oldSaved:%d\n", lg->txID, lg->txState, lg->oldSaved);
+		printf("log new: A=%d, B=%d, id=%s\n", lg->newA, lg->newB, lg->newIDstring);
+		printf("log old: A=%d, B=%d, id=%s\n", lg->oldA, lg->oldB, lg->oldIDstring);
+	}
 }
 
 int main(int argc, char **argv) {
 	setup(argc, argv);
-
+	printValues();
 	recover();
 	while (1) {
 		handleCommand(receiveCommand());
