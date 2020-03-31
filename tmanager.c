@@ -46,7 +46,6 @@ void initServer() {
 
   printf("Starting up Transaction Manager on %lu\n", port);
   printf("Port number:              %lu\n", port);
-  printf("Log file name:            %s\n", logFileName);
 }
 
 void initLogFile() {
@@ -96,8 +95,8 @@ void initTransactionLog() {
       txlog->transaction[i].tstate = TX_NOTINUSE;
     }
 
-    txlog->initialized = -1;
     logToFile();
+    txlog->initialized = 1;
   }
 }
 
@@ -243,48 +242,50 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
     int voteResult = getVoteResult(message->tid, numWorkers);
     if (voteResult == 1) {
       // All nodes voted yes.
+      setTransactionState(message->tid, TX_COMMITTED);
       message->type = TXMSG_COMMITTED;
-      sendMessage(message, client);
     } else {
-      // TODO:  >= 1 node voted no.
-    }
-  }
-}
-
-void processAbortVote(managerType *message, struct sockaddr_in *client) {
-  setWorkerVote(message->tid);
-
-  int index = getTransactionById(message->tid);
-  int numWorkers = getNumWorkers(index);
-  int numReplies = getNumAnswers(index);
-
-  if (numReplies >= numWorkers) {
-    int voteResult = getVoteResult(message->tid, numWorkers);
-    if (voteResult == 1) {
-      // All nodes voted yes.
+      setTransactionState(message->tid, TX_ABORTED);
       message->type = TXMSG_ABORTED;
-      sendMessage(message, client);
-    } else {
-      // TODO:  >= 1 node voted no.
     }
+    sendMessage(message, client);
   }
 }
 
 void processCommitCrash(managerType *message, struct sockaddr_in *client) {
-  exit(-1);
+  setWorkerVote(message->tid);
+
+  int index = getTransactionById(message->tid);
+  int numWorkers = getNumWorkers(index);
+  int numAnswers = getNumAnswers(index);
+
+  if (numAnswers >= numWorkers) {
+    int voteResult = getVoteResult(message->tid, numWorkers);
+    if (voteResult == 1) {
+      // All nodes voted yes.
+      setTransactionState(message->tid, TX_COMMITTED);
+      message->type = TXMSG_COMMITTED;
+    } else {
+      setTransactionState(message->tid, TX_ABORTED);
+      message->type = TXMSG_ABORTED;
+    }
+    txlog->initialized = 0;
+    exit(-1);
+  }
 }
 
 void processAbort(managerType *message, struct sockaddr_in *client) {
   worker *workers = getWorkers(message->tid);
-  setTransactionTimer(message->tid, time(NULL) + TIMEOUT);
   for (int i = 0; i < sizeof(*workers) / sizeof(workers[0]); i++) {
     message->type = TXMSG_ABORTED;
     sendMessage(message, &workers[i].client);
-    setTransactionState(message->tid, TX_VOTING);
+    setTransactionState(message->tid, TX_ABORTED);
   }
 }
 
 void processAbortCrash(managerType *message, struct sockaddr_in *client) {
+  setTransactionState(message->tid, TX_ABORTED);
+  txlog->initialized = 0;
   exit(-1);
 }
 
@@ -311,7 +312,6 @@ void processJoin(managerType *message, struct sockaddr_in *client) {
 
 void processMessage(managerType *message, struct sockaddr_in *client) {
   receiveMessage(message, client);
-  txlog->initialized = 1;
 
   switch (message->type) {
   case TXMSG_BEGIN:
@@ -335,12 +335,6 @@ void processMessage(managerType *message, struct sockaddr_in *client) {
   case TXMSG_VOTE_COMMIT:
     processCommitVote(message, client);
     break;
-  case TXMSG_VOTE_ABORT:
-    processAbortVote(message, client);
-    break;
-  default:
-    // No message received -> do nothing.
-    break;
   }
 }
 
@@ -357,6 +351,36 @@ void resetTimer(int i) {
   txlog->transaction[i].answers = 0;
 }
 
+void sendResult(int i, uint32_t state) {
+  worker *workers = getWorkers(txlog->transaction[i].txID);
+  int numWorkers = getNumWorkers(i);
+  managerType message;
+
+  message.tid = txlog->transaction[i].txID;
+  message.type = state;
+
+  for (int j = 0; j < numWorkers; j++) {
+    sendMessage(&message, &workers[i].client);
+  }
+}
+
+void recoverFromCrash() {
+  for (int i = 0; i < MAX_TX; i++) {
+    switch (txlog->transaction[i].tstate) {
+    case TX_COMMITTED:
+      sendResult(i, TX_COMMITTED);
+      break;
+    case TX_ABORTED:
+    case TX_INPROGRESS:
+    case TX_VOTING:
+      sendResult(i, TX_ABORTED);
+      break;
+    default:
+      break;
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   processArgs(argc, argv);
   initServer();
@@ -364,14 +388,16 @@ int main(int argc, char **argv) {
   initTransactionLog();
 
   for (int i = 0;; i = (++i % MAX_TX)) {
-    if (isTransactionTimedOut(i)) {
-      // Voting was short circuited due to >= 1 node failing to respond to vote.
-      resetTimer(i);
-    } else {
-      managerType message;
-      struct sockaddr_in client;
-      bzero(&client, sizeof(client));
+    managerType message;
+    struct sockaddr_in client;
+    bzero(&client, sizeof(client));
 
+    if (isTransactionTimedOut(i)) {
+      sendResult(i, TX_ABORTED);
+      resetTimer(i);
+    } else if (txlog->initialized == 0) {
+      recoverFromCrash();
+    } else {
       processMessage(&message, &client);
     }
   }
