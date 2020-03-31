@@ -5,8 +5,8 @@
 
 #define MAX_NODES 10
 #define IDLEN 64
-#define RESPONSE_TIMEOUT 10
-#define DECISION_TIMEOUT 30
+#define RESPONSE_TIME_LIMIT 10
+#define DECISION_TIME_LIMIT 30
 // Feel free to modify anything in this file except the
 // struct transactionData
 

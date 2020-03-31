@@ -28,7 +28,7 @@ static enum txMsgKind voteValue = TXMSG_VOTE_COMMIT;  // by default, commit
 static int crashAfterDelay = 0;
 static long delay = 0;
 
-inline static void setState(enum workerTxState state) {
+inline static void setWorkerState(enum workerTxState state) {
 	log->log.txState = state;
 }
 
@@ -274,13 +274,13 @@ static void initiateTransaction(const msgType* command) {
 	}
 
 	log->log.txID = command->tid;
-	setState(WTX_INITIATED);
+	setWorkerState(WTX_INITIATED);
 	log->log.transactionManager = *((struct sockaddr_in *) serverInfo->ai_addr);
 
 	uint32_t msgType = command->msgID == BEGINTX ? TXMSG_BEGIN : TXMSG_JOIN;
 	managerType msg = {command->tid, msgType};
 	sendMessage(&msg);
-	latestResponseTime = time(NULL) + RESPONSE_TIMEOUT;
+	latestResponseTime = time(NULL) + RESPONSE_TIME_LIMIT;
 }
 
 static void resetTimers() {
@@ -300,6 +300,7 @@ static void commitTransaction() {
 }
 
 static void abortTransaction() {
+	printf("Aborting transaction.\n");
 	if (log->log.oldSaved & 1) {
 		memcpy(&log->txData.IDstring, &log->log.oldIDstring, IDLEN);
 	}
@@ -313,6 +314,16 @@ static void abortTransaction() {
 	log->log.oldSaved = 0;
 	flushLog();
 	resetTimers();
+}
+
+static void requestCommit(int crash) {
+	const managerType msg = {
+		log->log.txID,
+		crash ? TXMSG_COMMIT_CRASH_REQUEST : TXMSG_COMMIT_REQUEST
+	};
+	sendMessage(&msg);
+	latestResponseTime = time(NULL) + RESPONSE_TIME_LIMIT;
+	setWorkerState(WTX_PREPARED);
 }
 
 static void handleCommand(const msgType* command) {
@@ -331,6 +342,9 @@ static void handleCommand(const msgType* command) {
 			initiateTransaction(command);
 			break;
 		case NEW_A:
+			if (currState() == WTX_NOTACTIVE) {
+
+			}
 			break;
 		case NEW_B:
 			break;
@@ -343,14 +357,17 @@ static void handleCommand(const msgType* command) {
 			_exit(EXIT_SUCCESS);
 			break;
 		case COMMIT:
+			requestCommit(0);
 			break;
 		case COMMIT_CRASH:
+			requestCommit(1);
 			break;
 		case ABORT:
 			break;
 		case ABORT_CRASH:
 			break;
 		case VOTE_ABORT:
+			voteValue = TXMSG_VOTE_ABORT;
 			break;
 	}
 }
@@ -370,7 +387,7 @@ static void handleMessage(const managerType* msg) {
 		case TXMSG_TID_OK:
 			if (currState() == WTX_INITIATED) {
 				latestResponseTime = 0;
-				setState(WTX_IN_PROGRESS);
+				setWorkerState(WTX_IN_PROGRESS);
 			}
 			break;
 		case TXMSG_TID_IN_USE:
@@ -402,12 +419,12 @@ static void handleMessage(const managerType* msg) {
 }
 
 static void respondVote() {
-	setState(WTX_PREPARED);
+	setWorkerState(delayedVoteValue == TXMSG_VOTE_COMMIT ? WTX_COMMITTED : WTX_ABORTED);
 	flushLog();
 	if (crashAfterDelay) _exit(EXIT_SUCCESS);
 	const managerType msg = { log->log.txID, delayedVoteValue };
 	sendMessage(&msg);
-	rePollTime = time(NULL) + DECISION_TIMEOUT;
+	rePollTime = time(NULL) + DECISION_TIME_LIMIT;
 }
 
 static void checkTimers() {
@@ -417,7 +434,8 @@ static void checkTimers() {
 			printf("Response timeout for transaction %lu.\n", log->log.txID);
 			latestResponseTime = 0;
 			if (currState() == WTX_INITIATED) {
-				setState(WTX_NOTACTIVE);
+				// setWorkerState(WTX_IN_PROGRESS);  // FOR TESTING. TODO: REMOVE!!!
+				setWorkerState(WTX_NOTACTIVE);
 			} else if (currState() == WTX_IN_PROGRESS) {
 				abortTransaction();
 			}
@@ -425,7 +443,7 @@ static void checkTimers() {
 	}
 	if (rePollTime) {
 		if (now > rePollTime) {
-			rePollTime = now + RESPONSE_TIMEOUT;
+			rePollTime = now + RESPONSE_TIME_LIMIT;
 			const managerType msg = { log->log.txID, TXMSG_POLL_RESULT };
 			sendMessage(&msg);
 		}
