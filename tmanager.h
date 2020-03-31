@@ -5,6 +5,7 @@
 #define TMANGER_h 100
 #define MAX_WORKERS 6
 #define MAX_TX 4
+#define TIMEOUT 10
 
 enum txState {
   TX_NOTINUSE = 100,
@@ -17,6 +18,8 @@ enum txState {
 struct tx {
   unsigned long txID;
   enum txState tstate;
+  time_t timer;
+  int answers;
   struct sockaddr_in worker[MAX_WORKERS];
 };
 

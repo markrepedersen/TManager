@@ -72,6 +72,12 @@ void initLogFile() {
   }
 }
 
+void logToFile() {
+  if (msync(&txlog, sizeof(struct transactionSet), MS_SYNC | MS_INVALIDATE)) {
+    perror("Msync problem");
+  }
+}
+
 void initTransactionLog() {
   txlog = mmap(NULL, 512, PROT_READ | PROT_WRITE, MAP_SHARED, logfileFD, 0);
 
@@ -81,14 +87,12 @@ void initTransactionLog() {
   }
 
   if (!txlog->initialized) {
-    int i;
-    for (i = 0; i < MAX_WORKERS; i++) {
+    for (int i = 0; i < MAX_WORKERS; i++) {
       txlog->transaction[i].tstate = TX_NOTINUSE;
     }
 
     txlog->initialized = -1;
-    // Make sure in memory copy is flushed to disk
-    msync(txlog, sizeof(struct transactionSet), MS_SYNC | MS_INVALIDATE);
+    logToFile();
   }
 }
 
@@ -108,16 +112,9 @@ void processArgs(int argc, char **argv) {
   }
 }
 
-void init(int argc, char **argv) {
-  processArgs(argc, argv);
-  initServer();
-  initLogFile();
-  initTransactionLog();
-}
-
 int receiveMessage(managerType *message, struct sockaddr_in *client) {
   socklen_t len;
-  int n = recvfrom(sockfd, message, sizeof(managerType), MSG_WAITALL,
+  int n = recvfrom(sockfd, message, sizeof(managerType), MSG_DONTWAIT,
                    (struct sockaddr *)&client, &len);
 
   if (n < 0) {
@@ -137,6 +134,33 @@ int sendMessage(managerType *message, struct sockaddr_in *client) {
   }
 
   return n;
+}
+
+int getTransactionById(unsigned long txId) {
+  for (int i = 0; i < sizeof txlog->transaction / sizeof txlog->transaction[0];
+       i++) {
+    if (txlog->transaction[i].txID == txId) {
+      return i;
+    }
+  }
+}
+
+void setTransactionState(unsigned long txId, enum txState state) {
+  for (int i = 0;
+       i < sizeof(txlog->transaction) / sizeof(txlog->transaction[0]); i++) {
+    if (txlog->transaction[i].txID == txId) {
+      txlog->transaction[i].tstate = state;
+    }
+  }
+}
+
+void setTransactionTimer(unsigned long txId, time_t timer) {
+  for (int i = 0;
+       i < sizeof(txlog->transaction) / sizeof(txlog->transaction[0]); i++) {
+    if (txlog->transaction[i].txID == txId) {
+      txlog->transaction[i].timer = timer;
+    }
+  }
 }
 
 int isTransactionInUse(unsigned long tid) {
@@ -160,45 +184,77 @@ struct sockaddr_in *getWorkersByTransactionId(unsigned long tid) {
   return NULL;
 }
 
+// Adds 1 to the number of replies to votes seen so far for the given
+// transaction.
+void incrementAnswers(int i) { txlog->transaction[i].answers++; }
+
 void processCommit(managerType *message, struct sockaddr_in *client) {
-  // Log commit request
   struct sockaddr_in *workers = getWorkersByTransactionId(message->tid);
-  for (int i = 0; i < sizeof(*workers) / sizeof(workers[0]); i++) {
+  setTransactionTimer(message->tid, time(NULL) + TIMEOUT);
+  for (int i = 0; i < sizeof *workers / sizeof workers[0]; i++) {
+    message->type = TXMSG_PREPARE_TO_COMMIT;
     sendMessage(message, &workers[i]);
   }
 }
 
+int getNumberOfWorkersForTransaction(int i) {
+  return sizeof txlog->transaction[i].worker /
+         sizeof txlog->transaction[i].worker[0];
+}
+
+int getNumberOfRepliesForTransaction(int i) {
+  return txlog->transaction[i].answers;
+}
+
+void processCommitVote(managerType *message, struct sockaddr_in *client) {
+  int index = getTransactionById(message->tid);
+  int numWorkers = getNumberOfWorkersForTransaction(index);
+  int numReplies = getNumberOfRepliesForTransaction(index);
+
+  if (numReplies >= numWorkers) {
+    // Send result to workers.
+  }
+}
+
+void processAbortVote(managerType *message, struct sockaddr_in *client) {
+  int numWorkers = getNumberOfWorkersForTransaction(message->tid);
+  int numReplies = getNumberOfRepliesForTransaction(message->tid);
+
+  if (numReplies >= numWorkers) {
+    // Send result to workers.
+  }
+}
+
 void processCommitCrash(managerType *message, struct sockaddr_in *client) {
-  // Log commit request
   abort();
 }
 
 void processAbort(managerType *message, struct sockaddr_in *client) {
-  // Log abort request
   struct sockaddr_in *workers = getWorkersByTransactionId(message->tid);
+  setTransactionTimer(message->tid, time(NULL) + TIMEOUT);
   for (int i = 0; i < sizeof(*workers) / sizeof(workers[0]); i++) {
+    message->type = TXMSG_ABORTED;
     sendMessage(message, &workers[i]);
   }
 }
 
 void processAbortCrash(managerType *message, struct sockaddr_in *client) {
-  // Log abort request
   abort();
 }
 
 void processBegin(managerType *message, struct sockaddr_in *client) {
-  // Log BEGIN request
   if (isTransactionInUse(message->tid)) {
     message->type = TXMSG_TID_IN_USE;
+    setTransactionState(message->tid, TX_INPROGRESS);
     sendMessage(message, client);
   } else {
     message->type = TXMSG_TID_OK;
+    setTransactionState(message->tid, TX_INPROGRESS);
     sendMessage(message, client);
   }
 }
 
 void processJoin(managerType *message, struct sockaddr_in *client) {
-  // Log JOIN request
   if (!isTransactionInUse(message->tid)) {
     message->type = TXMSG_TID_OK;
     sendMessage(message, client);
@@ -210,6 +266,8 @@ void processJoin(managerType *message, struct sockaddr_in *client) {
 
 void processMessage(managerType *message, struct sockaddr_in *client) {
   receiveMessage(message, client);
+  txlog->initialized = 1;
+
   switch (message->type) {
   case TXMSG_BEGIN:
     processBegin(message, client);
@@ -229,27 +287,47 @@ void processMessage(managerType *message, struct sockaddr_in *client) {
   case TXMSG_ABORT_CRASH_REQUEST:
     processAbortCrash(message, client);
     break;
+  case TXMSG_VOTE_COMMIT:
+    processCommitVote(message, client);
+    break;
+  case TXMSG_VOTE_ABORT:
+    processAbortVote(message, client);
+    break;
+  default:
+    // No message received -> do nothing.
+    break;
   }
 }
 
+int isTransactionTimedOut(int i) {
+  if (txlog->transaction[i].timer != -1 &&
+      time(NULL) > txlog->transaction[i].timer) {
+    return 1;
+  }
+  return 0;
+}
+
+void resetTimer(int i) {
+  txlog->transaction[i].timer = -1;
+  txlog->transaction[i].answers = 0;
+}
+
 int main(int argc, char **argv) {
-  init(argc, argv);
+  processArgs(argc, argv);
+  initServer();
+  initLogFile();
+  initTransactionLog();
 
-  int n;
-  unsigned char buff[1024];
-  for (int i = 0;; i = (++i % MAX_WORKERS)) {
-    managerType message;
-    struct sockaddr_in client;
-    bzero(&client, sizeof(client));
+  for (int i = 0;; i = (++i % MAX_TX)) {
+    if (isTransactionTimedOut(i)) {
+      // One or more nodes failed to respond in time.
+      resetTimer(i);
+    } else {
+      managerType message;
+      struct sockaddr_in client;
+      bzero(&client, sizeof(client));
 
-    processMessage(&message, &client);
-
-    txlog->transaction[i].worker[0] = client;
-    // Make sure in memory copy is flushed to disk
-    if (msync(&txlog, sizeof(struct transactionSet), MS_SYNC | MS_INVALIDATE)) {
-      perror("Msync problem");
+      processMessage(&message, &client);
     }
   }
-
-  sleep(1000);
 }
