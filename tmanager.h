@@ -22,7 +22,7 @@ typedef struct worker {
 
 typedef struct tx {
   unsigned long txID;
-  enum txState tstate;
+  transactionState tstate;
   time_t timer;
   int answers;
   worker workers[MAX_WORKERS];
@@ -30,13 +30,13 @@ typedef struct tx {
 
 typedef struct transactionSet {
   int initialized;
-  struct tx transaction[MAX_TX];
+  transaction transaction[MAX_TX];
 } transactionSet;
 
 int sockfd;
 unsigned long port;
 char logFileName[128];
 int logfileFD;
-struct transactionSet *txlog;
+transactionSet *txlog;
 
 #endif

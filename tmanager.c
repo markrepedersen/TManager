@@ -1,5 +1,9 @@
 #define _POSIX_C_SOURCE 1
 
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1
+#endif
+
 #include "tmanager.h"
 #include "msg.h"
 #include <arpa/inet.h>
@@ -7,6 +11,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/udp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +33,7 @@ void initServer() {
 
   struct sockaddr_in servAddr;
 
-  memset(&servAddr, 0, sizeof(servAddr));
+  memset(&servAddr, 0, sizeof(struct sockaddr_in));
 
   servAddr.sin_family = AF_INET;
   servAddr.sin_port = htons(port);
@@ -115,13 +120,16 @@ void processArgs(int argc, char **argv) {
 int receiveMessage(managerType *message, struct sockaddr_in *client) {
   socklen_t len;
   int n = recvfrom(sockfd, message, sizeof(managerType), MSG_DONTWAIT,
-                   (struct sockaddr *)&client, &len);
+                   (struct sockaddr *)client, &len);
 
-  if (n < 0) {
-    perror("Receiving error:");
-    abort();
+  if (n == sizeof(managerType)) {
+    return n;
   }
-
+  if (n != -1) {
+    printf("Received packet with invalid size: %d\n", n);
+  } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+    perror("Receive packet error");
+  }
   return n;
 }
 
@@ -130,7 +138,7 @@ int sendMessage(managerType *message, struct sockaddr_in *client) {
                  (struct sockaddr *)client, sizeof(struct sockaddr_in));
   if (n < 0) {
     perror("Sending error");
-    abort();
+    exit(-1);
   }
 
   return n;
@@ -143,6 +151,8 @@ int getTransactionById(unsigned long txId) {
       return i;
     }
   }
+  printf("Invalid transaction given at line %d", __LINE__);
+  return -1;
 }
 
 void setTransactionState(unsigned long txId, enum txState state) {
@@ -179,9 +189,7 @@ int getNumWorkers(int i) {
          sizeof txlog->transaction[i].workers[0];
 }
 
-int getNumAnswers(int i) {
-  return txlog->transaction[i].answers;
-}
+int getNumAnswers(int i) { return txlog->transaction[i].answers; }
 
 worker *getWorkers(unsigned long tid) {
   for (int i = 0;
@@ -238,7 +246,7 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
       message->type = TXMSG_COMMITTED;
       sendMessage(message, client);
     } else {
-      //TODO:  >= 1 node voted no.
+      // TODO:  >= 1 node voted no.
     }
   }
 }
@@ -257,13 +265,13 @@ void processAbortVote(managerType *message, struct sockaddr_in *client) {
       message->type = TXMSG_ABORTED;
       sendMessage(message, client);
     } else {
-      //TODO:  >= 1 node voted no.
+      // TODO:  >= 1 node voted no.
     }
   }
 }
 
 void processCommitCrash(managerType *message, struct sockaddr_in *client) {
-  abort();
+  exit(-1);
 }
 
 void processAbort(managerType *message, struct sockaddr_in *client) {
@@ -277,7 +285,7 @@ void processAbort(managerType *message, struct sockaddr_in *client) {
 }
 
 void processAbortCrash(managerType *message, struct sockaddr_in *client) {
-  abort();
+  exit(-1);
 }
 
 void processBegin(managerType *message, struct sockaddr_in *client) {
