@@ -27,8 +27,28 @@ static enum txMsgKind voteValue = TXMSG_VOTE_COMMIT;  // by default, commit
 static int crashAfterDelay = 0;
 static long delay = 0;
 
+
+static void flushAll() {
+	if (!log->initialized) log->initialized = 1;
+	if (msync(log, sizeof(struct logFile), MS_SYNC | MS_INVALIDATE)) {
+		perror("Msync problem");
+		exit(-1);
+	}
+}
+
+// Flush changes to the log file.
+static void flushLog() {
+	flushAll();
+	// if (!log->initialized) log->initialized = 1;
+	// if (msync(&log->log, sizeof(struct transactionData), MS_SYNC | MS_INVALIDATE)) {
+	// 	perror("Msync problem");
+	// 	exit(-1);
+	// }
+}
+
 inline static void setWorkerState(enum workerTxState state) {
 	log->log.txState = state;
+	flushLog();
 }
 
 inline static uint32_t currState() {
@@ -142,24 +162,6 @@ static void setup(int argc, char **argv) {
 	printf("Command port:  %lu\n", cmdPort);
 	printf("TX port:       %lu\n", txPort);
 	printf("Log file name: %s\n", logFileName);
-}
-
-static void flushAll() {
-	if (!log->initialized) log->initialized = 1;
-	if (msync(log, sizeof(struct logFile), MS_SYNC | MS_INVALIDATE)) {
-		perror("Msync problem");
-		exit(-1);
-	}
-}
-
-// Flush changes to the log file.
-static void flushLog() {
-	flushAll();
-	// if (!log->initialized) log->initialized = 1;
-	// if (msync(&log->log, sizeof(struct transactionData), MS_SYNC | MS_INVALIDATE)) {
-	// 	perror("Msync problem");
-	// 	exit(-1);
-	// }
 }
 
 static void* receivePacket(int sockfd, void* buf, int buflen, struct sockaddr* sender, socklen_t* addrLen) {
