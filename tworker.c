@@ -429,7 +429,7 @@ static void handleMessage(const managerType* msg) {
 		case TXMSG_PREPARE_TO_COMMIT:
 			if (currState() == WTX_IN_PROGRESS) {
 				latestResponseTime = 0;
-				long waitTime = abs(delay);
+				long waitTime = labs(delay);
 				delayedVoteValue = voteValue;
 				delayedResponseTime = time(NULL) + waitTime;
 				crashAfterDelay = delay < 0;
