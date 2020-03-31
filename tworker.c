@@ -103,20 +103,6 @@ static void setup(int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	// Some demo data
-	// strncpy(log->txData.IDstring, "Hi there!! ¯\\_(ツ)_/¯", IDLEN);
-	// log->txData.A = 10;
-	// log->txData.B = 100;
-	// log->log.oldA = 83;
-	// log->log.newA = 10;
-	// log->log.oldB = 100;
-	// log->log.newB = 1023;
-	// log->initialized = -1;
-	// flush();
-
-	// Some demo data
-	// strncpy(log->log.newIDstring, "1234567890123456789012345678901234567890", IDLEN);
-
 	cmdSock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (cmdSock < 0) {
 		perror("Could not open socket");
@@ -159,9 +145,18 @@ static void setup(int argc, char **argv) {
 	printf("Log file name: %s\n", logFileName);
 }
 
+static void flushAll() {
+	if (!log->initialized) log->initialized = 1;
+	if (msync(log, sizeof(struct logFile), MS_SYNC | MS_INVALIDATE)) {
+		perror("Msync problem");
+		exit(-1);
+	}
+}
+
 // Flush changes to the log file.
 static void flushLog() {
-	if (msync(log, sizeof(struct logFile), MS_SYNC | MS_INVALIDATE)) {
+	if (!log->initialized) log->initialized = 1;
+	if (msync(&log->log, sizeof(struct transactionData), MS_SYNC | MS_INVALIDATE)) {
 		perror("Msync problem");
 		exit(-1);
 	}
@@ -259,8 +254,8 @@ static void sendMessage(const managerType* msg) {
 static void initiateTransaction(const msgType* command) {
 	static struct addrinfo* serverInfo = NULL;
 
-	if (log->log.txState != WTX_NOTACTIVE) {
-		printf("Another transaction is currently ongoing (current status: %d).\n", log->log.txState);
+	if (currState() != WTX_NOTACTIVE) {
+		printf("Another transaction is currently ongoing (current status: %d).\n", currState());
 		return;
 	}
 
@@ -293,9 +288,9 @@ static void commitTransaction() {
 	memcpy(&log->txData.IDstring, &log->log.newIDstring, IDLEN);
 	memcpy(&log->txData.B, &log->log.newB, sizeof(int));
 	memcpy(&log->txData.A, &log->log.newA, sizeof(int));
-	log->log.txState = WTX_NOTACTIVE;
+	setWorkerState(WTX_NOTACTIVE);
 	log->log.oldSaved = 0;
-	flushLog();
+	flushAll();
 	resetTimers();
 }
 
@@ -310,10 +305,19 @@ static void abortTransaction() {
 	if ((log->log.oldSaved >> 2) & 1) {
 		memcpy(&log->txData.A, &log->log.oldA, sizeof(int));
 	}
-	log->log.txState = WTX_NOTACTIVE;
+	setWorkerState(WTX_NOTACTIVE);
 	log->log.oldSaved = 0;
-	flushLog();
+	flushAll();
 	resetTimers();
+}
+
+static void requestAbort(int crash) {
+	const managerType msg = {
+		log->log.txID,
+		crash ? TXMSG_ABORT_CRASH_REQUEST : TXMSG_ABORT_REQUEST
+	};
+	sendMessage(&msg);
+	abortTransaction();
 }
 
 static void requestCommit(int crash) {
@@ -324,6 +328,21 @@ static void requestCommit(int crash) {
 	sendMessage(&msg);
 	latestResponseTime = time(NULL) + RESPONSE_TIME_LIMIT;
 	setWorkerState(WTX_PREPARED);
+}
+
+static void newValue(const void* src, void* logOld, void* logNew, void* realDst, int len, int bitInd) {
+	if (currState() == WTX_NOTACTIVE) {
+		memcpy(realDst, src, len);
+		flushAll();
+	} else {
+		// save old value if not already saved
+		if (!((log->log.oldSaved >> bitInd) & 1)) {
+			memcpy(logOld, realDst, len);
+		}
+		memcpy(realDst, src, len);
+		memcpy(logNew, src, len);
+		flushLog();
+	}
 }
 
 static void handleCommand(const msgType* command) {
@@ -342,13 +361,16 @@ static void handleCommand(const msgType* command) {
 			initiateTransaction(command);
 			break;
 		case NEW_A:
-			if (currState() == WTX_NOTACTIVE) {
-
-			}
+			newValue(&command->newValue, &log->log.oldA,
+				&log->log.newA, &log->txData.A, sizeof(int), 2);
 			break;
 		case NEW_B:
+			newValue(&command->newValue, &log->log.oldB,
+				&log->log.newB, &log->txData.B, sizeof(int), 1);
 			break;
 		case NEW_IDSTR:
+			newValue(&command->newValue, &log->log.oldIDstring, &log->log.newIDstring,
+				&log->txData.IDstring, sizeof(char) * IDLEN, 0);
 			break;
 		case DELAY_RESPONSE:
 			delay = command->delay;
@@ -363,8 +385,10 @@ static void handleCommand(const msgType* command) {
 			requestCommit(1);
 			break;
 		case ABORT:
+			requestAbort(0);
 			break;
 		case ABORT_CRASH:
+			requestAbort(1);
 			break;
 		case VOTE_ABORT:
 			voteValue = TXMSG_VOTE_ABORT;
@@ -378,11 +402,15 @@ static void handleMessage(const managerType* msg) {
 		printf("Received invalid message type: %u\n", msg->type);
 		return;
 	}
+	printMessage(msg);
 	if (msg->tid != log->log.txID) {
-		printf("Mismatching tids - expected: %lu, got: %u", log->log.txID, msg->tid);
+		printf("Mismatching tids - expected: %lu, got: %u\n", log->log.txID, msg->tid);
 		return;
 	}
-	printMessage(msg);
+	if (currState() == WTX_NOTACTIVE) {
+		printf("Received message when not currently active. Ignoring.\n");
+		return;
+	}
 	switch (msg->type) {
 		case TXMSG_TID_OK:
 			if (currState() == WTX_INITIATED) {
@@ -393,7 +421,6 @@ static void handleMessage(const managerType* msg) {
 		case TXMSG_TID_IN_USE:
 			if (currState() == WTX_INITIATED) {
 				latestResponseTime = 0;
-				// todo: do we do something w/ log here?
 				printf("Bad TID %u\n", msg->tid);
 				exit(EXIT_FAILURE);
 			}
@@ -436,7 +463,7 @@ static void checkTimers() {
 			if (currState() == WTX_INITIATED) {
 				// setWorkerState(WTX_IN_PROGRESS);  // FOR TESTING. TODO: REMOVE!!!
 				setWorkerState(WTX_NOTACTIVE);
-			} else if (currState() == WTX_IN_PROGRESS) {
+			} else if (currState() == WTX_PREPARED) {
 				abortTransaction();
 			}
 		}
@@ -456,9 +483,14 @@ static void checkTimers() {
 	}
 }
 
+static void recover() {
+	if (!log->initialized) return;
+}
+
 int main(int argc, char **argv) {
 	setup(argc, argv);
 
+	recover();
 	while (1) {
 		handleCommand(receiveCommand());
 		handleMessage(receiveMessage());

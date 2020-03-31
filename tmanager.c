@@ -73,7 +73,7 @@ void initLogFile() {
 }
 
 void logToFile() {
-  if (msync(&txlog, sizeof(struct transactionSet), MS_SYNC | MS_INVALIDATE)) {
+  if (msync(txlog, sizeof(struct transactionSet), MS_SYNC | MS_INVALIDATE)) {
     perror("Msync problem");
   }
 }
@@ -230,7 +230,7 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
   int index = getTransactionById(message->tid);
   int numWorkers = getNumWorkers(index);
   int numAnswers = getNumAnswers(index);
-    
+
   if (numAnswers >= numWorkers) {
     int voteResult = getVoteResult(message->tid, numWorkers);
     if (voteResult == 1) {
@@ -245,11 +245,11 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
 
 void processAbortVote(managerType *message, struct sockaddr_in *client) {
   setWorkerVote(message->tid);
-  
+
   int index = getTransactionById(message->tid);
   int numWorkers = getNumWorkers(index);
-  int numReplies = getNumAnswers(index);  
-  
+  int numReplies = getNumAnswers(index);
+
   if (numReplies >= numWorkers) {
     int voteResult = getVoteResult(message->tid, numWorkers);
     if (voteResult == 1) {
