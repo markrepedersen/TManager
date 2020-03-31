@@ -462,13 +462,7 @@ static void checkTimers() {
 		if (now > latestResponseTime) {
 			printf("Response timeout for transaction %lu.\n", log->log.txID);
 			latestResponseTime = 0;
-			if (currState() == WTX_INITIATED) {
-				// setWorkerState(WTX_IN_PROGRESS);  // FOR TESTING. TODO: REMOVE!!!
-				setWorkerState(WTX_NOTACTIVE);
-			}
-			// else if (currState() == WTX_PREPARED) {
-			// 	abortTransaction();
-			// }
+			if (currState() == WTX_INITIATED) setWorkerState(WTX_NOTACTIVE);
 		}
 	}
 	if (rePollTime) {
@@ -505,7 +499,6 @@ static void recover() {
 		case WTX_IN_PROGRESS:
 			printf("Aborting since worker crashed\n");
 			requestAbort(0);
-			abortTransaction();
 			break;
 		default:
 			printf("Unknown state: %d\n", currState());
