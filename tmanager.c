@@ -174,54 +174,91 @@ int isTransactionInUse(unsigned long tid) {
   return isDuplicate;
 }
 
-struct sockaddr_in *getWorkersByTransactionId(unsigned long tid) {
+int getNumWorkers(int i) {
+  return sizeof txlog->transaction[i].workers /
+         sizeof txlog->transaction[i].workers[0];
+}
+
+int getNumAnswers(int i) {
+  return txlog->transaction[i].answers;
+}
+
+worker *getWorkers(unsigned long tid) {
   for (int i = 0;
        i < sizeof(txlog->transaction) / sizeof(txlog->transaction[0]); i++) {
     if (tid == txlog->transaction[i].txID) {
-      return txlog->transaction[i].worker;
+      return txlog->transaction[i].workers;
     }
   }
   return NULL;
 }
 
-// Adds 1 to the number of replies to votes seen so far for the given
-// transaction.
-void incrementAnswers(int i) { txlog->transaction[i].answers++; }
-
 void processCommit(managerType *message, struct sockaddr_in *client) {
-  struct sockaddr_in *workers = getWorkersByTransactionId(message->tid);
+  worker *workers = getWorkers(message->tid);
   setTransactionTimer(message->tid, time(NULL) + TIMEOUT);
   for (int i = 0; i < sizeof *workers / sizeof workers[0]; i++) {
     message->type = TXMSG_PREPARE_TO_COMMIT;
-    sendMessage(message, &workers[i]);
+    sendMessage(message, &workers->client);
+    setTransactionState(message->tid, TX_VOTING);
   }
 }
 
-int getNumberOfWorkersForTransaction(int i) {
-  return sizeof txlog->transaction[i].worker /
-         sizeof txlog->transaction[i].worker[0];
+int getVoteResult(unsigned long tid, int numWorkers) {
+  int numVotes = 0;
+  worker *workers = getWorkers(tid);
+  for (int i = 0; i < numWorkers; i++) {
+    numVotes += workers[i].vote;
+  }
+
+  return numVotes >= numWorkers;
 }
 
-int getNumberOfRepliesForTransaction(int i) {
-  return txlog->transaction[i].answers;
+void setWorkerVote(unsigned long tid) {
+  for (int i = 0; i < MAX_TX; i++) {
+    txlog->transaction[i].answers++;
+    if (txlog->transaction[i].txID == tid) {
+      for (int j = 0; j < MAX_WORKERS; j++) {
+        txlog->transaction[i].workers[j].vote = 1;
+      }
+    }
+  }
 }
 
 void processCommitVote(managerType *message, struct sockaddr_in *client) {
-  int index = getTransactionById(message->tid);
-  int numWorkers = getNumberOfWorkersForTransaction(index);
-  int numReplies = getNumberOfRepliesForTransaction(index);
+  setWorkerVote(message->tid);
 
-  if (numReplies >= numWorkers) {
-    // Send result to workers.
+  int index = getTransactionById(message->tid);
+  int numWorkers = getNumWorkers(index);
+  int numAnswers = getNumAnswers(index);
+    
+  if (numAnswers >= numWorkers) {
+    int voteResult = getVoteResult(message->tid, numWorkers);
+    if (voteResult == 1) {
+      // All nodes voted yes.
+      message->type = TXMSG_COMMITTED;
+      sendMessage(message, client);
+    } else {
+      //TODO:  >= 1 node voted no.
+    }
   }
 }
 
 void processAbortVote(managerType *message, struct sockaddr_in *client) {
-  int numWorkers = getNumberOfWorkersForTransaction(message->tid);
-  int numReplies = getNumberOfRepliesForTransaction(message->tid);
-
+  setWorkerVote(message->tid);
+  
+  int index = getTransactionById(message->tid);
+  int numWorkers = getNumWorkers(index);
+  int numReplies = getNumAnswers(index);  
+  
   if (numReplies >= numWorkers) {
-    // Send result to workers.
+    int voteResult = getVoteResult(message->tid, numWorkers);
+    if (voteResult == 1) {
+      // All nodes voted yes.
+      message->type = TXMSG_ABORTED;
+      sendMessage(message, client);
+    } else {
+      //TODO:  >= 1 node voted no.
+    }
   }
 }
 
@@ -230,11 +267,12 @@ void processCommitCrash(managerType *message, struct sockaddr_in *client) {
 }
 
 void processAbort(managerType *message, struct sockaddr_in *client) {
-  struct sockaddr_in *workers = getWorkersByTransactionId(message->tid);
+  worker *workers = getWorkers(message->tid);
   setTransactionTimer(message->tid, time(NULL) + TIMEOUT);
   for (int i = 0; i < sizeof(*workers) / sizeof(workers[0]); i++) {
     message->type = TXMSG_ABORTED;
-    sendMessage(message, &workers[i]);
+    sendMessage(message, &workers[i].client);
+    setTransactionState(message->tid, TX_VOTING);
   }
 }
 
@@ -245,13 +283,12 @@ void processAbortCrash(managerType *message, struct sockaddr_in *client) {
 void processBegin(managerType *message, struct sockaddr_in *client) {
   if (isTransactionInUse(message->tid)) {
     message->type = TXMSG_TID_IN_USE;
-    setTransactionState(message->tid, TX_INPROGRESS);
     sendMessage(message, client);
   } else {
     message->type = TXMSG_TID_OK;
-    setTransactionState(message->tid, TX_INPROGRESS);
     sendMessage(message, client);
   }
+  setTransactionState(message->tid, TX_INPROGRESS);
 }
 
 void processJoin(managerType *message, struct sockaddr_in *client) {
@@ -320,7 +357,7 @@ int main(int argc, char **argv) {
 
   for (int i = 0;; i = (++i % MAX_TX)) {
     if (isTransactionTimedOut(i)) {
-      // One or more nodes failed to respond in time.
+      // Voting was short circuited due to >= 1 node failing to respond to vote.
       resetTimer(i);
     } else {
       managerType message;

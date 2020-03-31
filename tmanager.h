@@ -7,26 +7,31 @@
 #define MAX_TX 4
 #define TIMEOUT 10
 
-enum txState {
+typedef enum txState {
   TX_NOTINUSE = 100,
   TX_INPROGRESS,
   TX_VOTING,
   TX_ABORTED,
   TX_COMMITTED
-};
+} transactionState;
 
-struct tx {
+typedef struct worker {
+  struct sockaddr_in client;
+  int vote = 0;
+} worker;
+
+typedef struct tx {
   unsigned long txID;
   enum txState tstate;
   time_t timer;
   int answers;
-  struct sockaddr_in worker[MAX_WORKERS];
-};
+  worker workers[MAX_WORKERS];
+} transaction;
 
-struct transactionSet {
+typedef struct transactionSet {
   int initialized;
   struct tx transaction[MAX_TX];
-};
+} transactionSet;
 
 int sockfd;
 unsigned long port;
