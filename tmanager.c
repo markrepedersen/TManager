@@ -69,6 +69,9 @@ void initLogFile() {
     printf("Initializing the log file size\n");
     struct transactionSet tx;
     bzero(&tx, sizeof(tx));
+    for (int i = 0; i < MAX_TX; i++) {
+      tx.transaction[i].timer = -1;
+    }
     if (write(logfileFD, &tx, sizeof(tx)) != sizeof(tx)) {
       printf("Writing problem to log\n");
       exit(-1);
@@ -393,6 +396,7 @@ int main(int argc, char **argv) {
     bzero(&client, sizeof(client));
 
     if (isTransactionTimedOut(i)) {
+      printf("hello\n");
       sendResult(i, TX_ABORTED);
       resetTimer(i);
     } else if (txlog->initialized == 0) {
