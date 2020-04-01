@@ -229,6 +229,12 @@ void setWorkerVote(unsigned long tid) {
   }
 }
 
+void resetTimer(int i) {
+  txlog->transaction[i].timer = -1;
+  txlog->transaction[i].numAnswers = 0;
+  txlog->transaction[i].numYesVotes = 0;
+}
+
 void sendResult(int i, uint32_t state) {
   worker *workers = getWorkers(txlog->transaction[i].txID);
   int numWorkers = getNumWorkers(i);
@@ -238,7 +244,7 @@ void sendResult(int i, uint32_t state) {
   message.type = state;
 
   for (int j = 0; j < numWorkers; j++) {
-    sendMessage(&message, &workers[i].client);
+    sendMessage(&message, &workers[j].client);
   }
 }
 
@@ -271,8 +277,8 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
               sendResult(i, TXMSG_ABORTED);
             }
           }
-          txlog->transaction[index].timer = -1;
         }
+        resetTimer(i);
       }
     }
   }
@@ -384,12 +390,6 @@ int isTransactionTimedOut(int i) {
   return 0;
 }
 
-void resetTimer(int i) {
-  txlog->transaction[i].timer = -1;
-  txlog->transaction[i].numAnswers = 0;
-  txlog->transaction[i].numYesVotes = 0;
-}
-
 void recoverFromCrash() {
   for (int i = 0; i < MAX_TX; i++) {
     switch (txlog->transaction[i].tstate) {
@@ -419,7 +419,7 @@ int main(int argc, char **argv) {
     bzero(&client, sizeof(client));
 
     if (isTransactionTimedOut(i)) {
-      printf("hello\n");
+      printf("timeout\n");
       sendResult(i, TX_ABORTED);
       resetTimer(i);
     } else if (txlog->initialized == 0) {
