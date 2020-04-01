@@ -407,7 +407,7 @@ void recoverFromCrash() {
     case TX_ABORTED:
     case TX_INPROGRESS:
     case TX_VOTING:
-      sendResult(i, TX_ABORTED);
+      sendResult(i, TXMSG_ABORTED);
       break;
     default:
       break;
@@ -428,7 +428,7 @@ int main(int argc, char **argv) {
 
     if (isTransactionTimedOut(i)) {
       printf("timeout\n");
-      sendResult(i, TX_ABORTED);
+      sendResult(i, TXMSG_ABORTED);
       resetTimer(i);
     } else if (txlog->initialized == 0) {
       recoverFromCrash();
