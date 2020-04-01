@@ -402,7 +402,7 @@ void recoverFromCrash() {
   for (int i = 0; i < MAX_TX; i++) {
     switch (txlog->transaction[i].tstate) {
     case TX_COMMITTED:
-      sendResult(i, TX_COMMITTED);
+      sendResult(i, TXMSG_COMMITTED);
       break;
     case TX_ABORTED:
     case TX_INPROGRESS:
