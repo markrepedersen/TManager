@@ -246,7 +246,6 @@ void sendResult(int i, uint32_t state) {
   for (int j = 0; j < numWorkers; j++) {
     sendMessage(&message, &workers[j].client);
   }
-
   resetTimer(i);
 }
 
@@ -262,6 +261,7 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
     for (int i = 0; i < MAX_TX; i++) {
       if (txlog->transaction[i].txID == message->tid) {
         if (txlog->transaction[i].pendingCrash == 1) {
+	  txlog->transaction[i].pendingCrash = 0;
           perror("Commit crash");
           exit(-1);
         } else {
@@ -415,6 +415,7 @@ void recoverFromCrash() {
     default:
       break;
     }
+    resetTimer(i);
   }
 }
 
