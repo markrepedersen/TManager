@@ -312,6 +312,7 @@ void processAbort(managerType *message, struct sockaddr_in *client) {
       message->type = TXMSG_ABORTED;
       sendMessage(message, &workers[i].client);
       setTransactionState(message->tid, TX_ABORTED);
+      resetTimer(i);
     }
   }
 }
@@ -332,8 +333,8 @@ void processBegin(managerType *message, struct sockaddr_in *client) {
     for (int i = 0; i < MAX_TX; ++i) {
       if (txlog->transaction[i].tstate == TX_NOTINUSE) {
         txlog->transaction[i].txID = message->tid;
-        worker* w = &txlog->transaction[i]
-            .workers[txlog->transaction[i].numWorkers++];
+        worker *w =
+            &txlog->transaction[i].workers[txlog->transaction[i].numWorkers++];
         w->client = *client;
         w->initialized = 1;
         break;
@@ -352,8 +353,8 @@ void processJoin(managerType *message, struct sockaddr_in *client) {
     sendMessage(message, client);
     for (int i = 0; i < MAX_TX; ++i) {
       if (txlog->transaction[i].txID == message->tid) {
-        worker* w = &txlog->transaction[i]
-            .workers[txlog->transaction[i].numWorkers++];
+        worker *w =
+            &txlog->transaction[i].workers[txlog->transaction[i].numWorkers++];
         w->client = *client;
         w->initialized = 1;
         break;
