@@ -204,7 +204,7 @@ static const char* getManagerTypeString(uint32_t msgType) {
 		"TXMSG_VOTE_COMMIT",
 		"TXMSG_VOTE_ABORT",
 		"TXMSG_COMMITTED",
-		"TXMSG_POLL_RESULT"
+		"TXMSG_POLL_RESULT",
 		"TXMSG_ABORTED"
 	};
 	return names[msgType - TXMSG_BEGIN];
@@ -240,7 +240,7 @@ static void printCommand(const msgType* command) {
 
 static void printMessage(const managerType* msg) {
 	printf("[MESSAGE] ");
-	printf("%s: ", getManagerTypeString(msg->type));
+	printf("%s (%d): ", getManagerTypeString(msg->type), msg->type);
 	printf("tid: %u\n", msg->tid);
 }
 
