@@ -17,16 +17,17 @@ typedef enum txState {
 
 typedef struct worker {
   struct sockaddr_in client;
-  int vote;
 } worker;
 
 typedef struct tx {
   unsigned long txID;
   transactionState tstate;
   time_t timer;
-  int answers;
   worker workers[MAX_WORKERS];
   int numWorkers;
+  int pendingCrash;
+  int numAnswers;
+  int numYesVotes;
 } transaction;
 
 typedef struct transactionSet {

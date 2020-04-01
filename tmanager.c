@@ -186,13 +186,7 @@ int isTransactionInUse(unsigned long tid) {
   return isDuplicate;
 }
 
-int getNumWorkers(int i) {
-  return txlog->transaction[i].numWorkers;
-  // return sizeof txlog->transaction[i].workers /
-  //        sizeof txlog->transaction[i].workers[0];
-}
-
-int getNumAnswers(int i) { return txlog->transaction[i].answers; }
+int getNumWorkers(int i) { return txlog->transaction[i].numWorkers; }
 
 worker *getWorkers(unsigned long tid) {
   for (int i = 0;
@@ -204,33 +198,33 @@ worker *getWorkers(unsigned long tid) {
   return NULL;
 }
 
-void processCommit(managerType *message, struct sockaddr_in *client) {
-  worker *workers = getWorkers(message->tid);
-  setTransactionTimer(message->tid, time(NULL) + TIMEOUT);
-  for (int i = 0; i < sizeof *workers / sizeof workers[0]; i++) {
-    message->type = TXMSG_PREPARE_TO_COMMIT;
-    sendMessage(message, &workers->client);
-    setTransactionState(message->tid, TX_VOTING);
+int getNumAnswers(unsigned long tid) {
+  int numAnswers = 0;
+  for (int i = 0; i < MAX_TX; i++) {
+    if (txlog->transaction[i].txID == tid) {
+      numAnswers = txlog->transaction[i].numAnswers;
+    }
   }
+
+  return numAnswers;
 }
 
-int getVoteResult(unsigned long tid, int numWorkers) {
+int getNumYesVotes(unsigned long tid, int numWorkers) {
   int numVotes = 0;
-  worker *workers = getWorkers(tid);
-  for (int i = 0; i < numWorkers; i++) {
-    numVotes += workers[i].vote;
+  for (int i = 0; i < MAX_TX; i++) {
+    if (txlog->transaction[i].txID == tid) {
+      numVotes = txlog->transaction[i].numYesVotes;
+    }
   }
 
-  return numVotes >= numWorkers;
+  return numVotes == numWorkers;
 }
 
 void setWorkerVote(unsigned long tid) {
   for (int i = 0; i < MAX_TX; i++) {
-    txlog->transaction[i].answers++;
+    txlog->transaction[i].numAnswers++;
     if (txlog->transaction[i].txID == tid) {
-      for (int j = 0; j < MAX_WORKERS; j++) {
-        txlog->transaction[i].workers[j].vote = 1;
-      }
+      txlog->transaction[i].numYesVotes++;
     }
   }
 }
@@ -253,47 +247,53 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
 
   int index = getTransactionById(message->tid);
   int numWorkers = getNumWorkers(index);
-  int numAnswers = getNumAnswers(index);
+  int numYesVotes = getNumYesVotes(message->tid, numWorkers);
+  int numAnswers = getNumAnswers(message->tid);
 
   if (numAnswers == numWorkers) {
-    int voteResult = getVoteResult(message->tid, numWorkers);
-    if (voteResult == 1) {
-      // All nodes voted yes.
-      setTransactionState(message->tid, TX_COMMITTED);
-      message->type = TXMSG_COMMITTED;
-      for (int i = 0; i < getNumWorkers(index); i++) {
-        sendResult(i, TXMSG_COMMITTED);
-      }
-    } else {
-      setTransactionState(message->tid, TX_ABORTED);
-      message->type = TXMSG_ABORTED;
-      for (int i = 0; i < getNumWorkers(index); i++) {
-        sendResult(i, TXMSG_ABORTED);
+    for (int i = 0; i < MAX_TX; i++) {
+      if (txlog->transaction[i].txID == message->tid) {
+        if (txlog->transaction[i].pendingCrash == 1) {
+          perror("Commit crash");
+          exit(-1);
+        } else {
+          if (numYesVotes == numWorkers) {
+            // All nodes voted yes.
+            setTransactionState(message->tid, TX_COMMITTED);
+            message->type = TXMSG_COMMITTED;
+            for (int i = 0; i < numWorkers; i++) {
+              sendResult(i, TXMSG_COMMITTED);
+            }
+          } else {
+            setTransactionState(message->tid, TX_ABORTED);
+            message->type = TXMSG_ABORTED;
+            for (int i = 0; i < numWorkers; i++) {
+              sendResult(i, TXMSG_ABORTED);
+            }
+          }
+          txlog->transaction[index].timer = -1;
+        }
       }
     }
-    txlog->transaction[index].timer = -1;
+  }
+}
+
+void processCommit(managerType *message, struct sockaddr_in *client) {
+  worker *workers = getWorkers(message->tid);
+  setTransactionTimer(message->tid, time(NULL) + TIMEOUT);
+  for (int i = 0; i < sizeof *workers / sizeof workers[0]; i++) {
+    message->type = TXMSG_PREPARE_TO_COMMIT;
+    sendMessage(message, &workers->client);
+    setTransactionState(message->tid, TX_VOTING);
   }
 }
 
 void processCommitCrash(managerType *message, struct sockaddr_in *client) {
-  setWorkerVote(message->tid);
-
-  int index = getTransactionById(message->tid);
-  int numWorkers = getNumWorkers(index);
-  int numAnswers = getNumAnswers(index);
-
-  if (numAnswers >= numWorkers) {
-    int voteResult = getVoteResult(message->tid, numWorkers);
-    if (voteResult == 1) {
-      // All nodes voted yes.
-      setTransactionState(message->tid, TX_COMMITTED);
-      message->type = TXMSG_COMMITTED;
-    } else {
-      setTransactionState(message->tid, TX_ABORTED);
-      message->type = TXMSG_ABORTED;
+  processCommit(message, client);
+  for (int i = 0; i < MAX_TX; i++) {
+    if (txlog->transaction[i].txID == message->tid) {
+      txlog->transaction[i].pendingCrash = 1;
     }
-    txlog->initialized = 0;
-    exit(-1);
   }
 }
 
@@ -322,7 +322,9 @@ void processBegin(managerType *message, struct sockaddr_in *client) {
     for (int i = 0; i < MAX_TX; ++i) {
       if (txlog->transaction[i].tstate == TX_NOTINUSE) {
         txlog->transaction[i].txID = message->tid;
-        txlog->transaction[i].workers[txlog->transaction[i].numWorkers++].client = *client;
+        txlog->transaction[i]
+            .workers[txlog->transaction[i].numWorkers++]
+            .client = *client;
       }
     }
     setTransactionState(message->tid, TX_INPROGRESS);
@@ -338,7 +340,9 @@ void processJoin(managerType *message, struct sockaddr_in *client) {
     sendMessage(message, client);
     for (int i = 0; i < MAX_TX; ++i) {
       if (txlog->transaction[i].txID == message->tid) {
-        txlog->transaction[i].workers[txlog->transaction[i].numWorkers++].client = *client;
+        txlog->transaction[i]
+            .workers[txlog->transaction[i].numWorkers++]
+            .client = *client;
       }
     }
   }
@@ -382,7 +386,8 @@ int isTransactionTimedOut(int i) {
 
 void resetTimer(int i) {
   txlog->transaction[i].timer = -1;
-  txlog->transaction[i].answers = 0;
+  txlog->transaction[i].numAnswers = 0;
+  txlog->transaction[i].numYesVotes = 0;
 }
 
 void recoverFromCrash() {
