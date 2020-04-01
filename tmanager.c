@@ -246,6 +246,8 @@ void sendResult(int i, uint32_t state) {
   for (int j = 0; j < numWorkers; j++) {
     sendMessage(&message, &workers[j].client);
   }
+
+  resetTimer(i);
 }
 
 void processCommitVote(managerType *message, struct sockaddr_in *client) {
