@@ -234,6 +234,19 @@ void setWorkerVote(unsigned long tid) {
   }
 }
 
+void sendResult(int i, uint32_t state) {
+  worker *workers = getWorkers(txlog->transaction[i].txID);
+  int numWorkers = getNumWorkers(i);
+  managerType message;
+
+  message.tid = txlog->transaction[i].txID;
+  message.type = state;
+
+  for (int j = 0; j < numWorkers; j++) {
+    sendMessage(&message, &workers[i].client);
+  }
+}
+
 void processCommitVote(managerType *message, struct sockaddr_in *client) {
   setWorkerVote(message->tid);
 
@@ -247,11 +260,16 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
       // All nodes voted yes.
       setTransactionState(message->tid, TX_COMMITTED);
       message->type = TXMSG_COMMITTED;
+      for (int i = 0; i < MAX_TX; i++) {
+        sendResult(i, TXMSG_COMMITTED);
+      }
     } else {
       setTransactionState(message->tid, TX_ABORTED);
       message->type = TXMSG_ABORTED;
+      for (int i = 0; i < MAX_TX; i++) {
+        sendResult(i, TXMSG_ABORTED);
+      }
     }
-    sendMessage(message, client);
   }
 }
 
@@ -352,19 +370,6 @@ int isTransactionTimedOut(int i) {
 void resetTimer(int i) {
   txlog->transaction[i].timer = -1;
   txlog->transaction[i].answers = 0;
-}
-
-void sendResult(int i, uint32_t state) {
-  worker *workers = getWorkers(txlog->transaction[i].txID);
-  int numWorkers = getNumWorkers(i);
-  managerType message;
-
-  message.tid = txlog->transaction[i].txID;
-  message.type = state;
-
-  for (int j = 0; j < numWorkers; j++) {
-    sendMessage(&message, &workers[i].client);
-  }
 }
 
 void recoverFromCrash() {
