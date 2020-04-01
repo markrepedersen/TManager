@@ -288,9 +288,11 @@ void processCommit(managerType *message, struct sockaddr_in *client) {
   worker *workers = getWorkers(message->tid);
   setTransactionTimer(message->tid, time(NULL) + TIMEOUT);
   for (int i = 0; i < sizeof *workers / sizeof workers[0]; i++) {
-    message->type = TXMSG_PREPARE_TO_COMMIT;
-    sendMessage(message, &workers->client);
-    setTransactionState(message->tid, TX_VOTING);
+    if (workers[i].initialized == 1) {
+      message->type = TXMSG_PREPARE_TO_COMMIT;
+      sendMessage(message, &workers->client);
+      setTransactionState(message->tid, TX_VOTING);
+    }
   }
 }
 
@@ -306,9 +308,11 @@ void processCommitCrash(managerType *message, struct sockaddr_in *client) {
 void processAbort(managerType *message, struct sockaddr_in *client) {
   worker *workers = getWorkers(message->tid);
   for (int i = 0; i < sizeof(*workers) / sizeof(workers[0]); i++) {
-    message->type = TXMSG_ABORTED;
-    sendMessage(message, &workers[i].client);
-    setTransactionState(message->tid, TX_ABORTED);
+    if (workers[i].initialized == 1) {
+      message->type = TXMSG_ABORTED;
+      sendMessage(message, &workers[i].client);
+      setTransactionState(message->tid, TX_ABORTED);
+    }
   }
 }
 
@@ -331,7 +335,10 @@ void processBegin(managerType *message, struct sockaddr_in *client) {
         txlog->transaction[i]
             .workers[txlog->transaction[i].numWorkers++]
             .client = *client;
-	break;
+        txlog->transaction[i]
+            .workers[txlog->transaction[i].numWorkers++]
+            .initialized = 1;
+        break;
       }
     }
     setTransactionState(message->tid, TX_INPROGRESS);
@@ -350,7 +357,7 @@ void processJoin(managerType *message, struct sockaddr_in *client) {
         txlog->transaction[i]
             .workers[txlog->transaction[i].numWorkers++]
             .client = *client;
-	break;
+        break;
       }
     }
   }

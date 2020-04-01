@@ -17,6 +17,7 @@ typedef enum txState {
 
 typedef struct worker {
   struct sockaddr_in client;
+  int initialized;
 } worker;
 
 typedef struct tx {
