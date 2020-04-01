@@ -187,8 +187,9 @@ int isTransactionInUse(unsigned long tid) {
 }
 
 int getNumWorkers(int i) {
-  return sizeof txlog->transaction[i].workers /
-         sizeof txlog->transaction[i].workers[0];
+  return txlog->transaction[i].numWorkers;
+  // return sizeof txlog->transaction[i].workers /
+  //        sizeof txlog->transaction[i].workers[0];
 }
 
 int getNumAnswers(int i) { return txlog->transaction[i].answers; }
@@ -254,22 +255,23 @@ void processCommitVote(managerType *message, struct sockaddr_in *client) {
   int numWorkers = getNumWorkers(index);
   int numAnswers = getNumAnswers(index);
 
-  if (numAnswers >= numWorkers) {
+  if (numAnswers == numWorkers) {
     int voteResult = getVoteResult(message->tid, numWorkers);
     if (voteResult == 1) {
       // All nodes voted yes.
       setTransactionState(message->tid, TX_COMMITTED);
       message->type = TXMSG_COMMITTED;
-      for (int i = 0; i < MAX_TX; i++) {
+      for (int i = 0; i < getNumWorkers(index); i++) {
         sendResult(i, TXMSG_COMMITTED);
       }
     } else {
       setTransactionState(message->tid, TX_ABORTED);
       message->type = TXMSG_ABORTED;
-      for (int i = 0; i < MAX_TX; i++) {
+      for (int i = 0; i < getNumWorkers(index); i++) {
         sendResult(i, TXMSG_ABORTED);
       }
     }
+    txlog->transaction[index].timer = -1;
   }
 }
 
@@ -312,22 +314,33 @@ void processAbortCrash(managerType *message, struct sockaddr_in *client) {
 
 void processBegin(managerType *message, struct sockaddr_in *client) {
   if (isTransactionInUse(message->tid)) {
-    message->type = TXMSG_TID_IN_USE;
+    message->type = TXMSG_TID_BAD;
     sendMessage(message, client);
   } else {
     message->type = TXMSG_TID_OK;
     sendMessage(message, client);
+    for (int i = 0; i < MAX_TX; ++i) {
+      if (txlog->transaction[i].tstate == TX_NOTINUSE) {
+        txlog->transaction[i].txID = message->tid;
+        txlog->transaction[i].workers[txlog->transaction[i].numWorkers++].client = *client;
+      }
+    }
+    setTransactionState(message->tid, TX_INPROGRESS);
   }
-  setTransactionState(message->tid, TX_INPROGRESS);
 }
 
 void processJoin(managerType *message, struct sockaddr_in *client) {
   if (!isTransactionInUse(message->tid)) {
-    message->type = TXMSG_TID_OK;
+    message->type = TXMSG_TID_BAD;
     sendMessage(message, client);
   } else {
-    message->type = TXMSG_TID_IN_USE;
+    message->type = TXMSG_TID_OK;
     sendMessage(message, client);
+    for (int i = 0; i < MAX_TX; ++i) {
+      if (txlog->transaction[i].txID == message->tid) {
+        txlog->transaction[i].workers[txlog->transaction[i].numWorkers++].client = *client;
+      }
+    }
   }
 }
 

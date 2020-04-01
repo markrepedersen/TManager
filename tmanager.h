@@ -26,6 +26,7 @@ typedef struct tx {
   time_t timer;
   int answers;
   worker workers[MAX_WORKERS];
+  int numWorkers;
 } transaction;
 
 typedef struct transactionSet {

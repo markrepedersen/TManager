@@ -195,7 +195,7 @@ static const char* getManagerTypeString(uint32_t msgType) {
 		"TXMSG_BEGIN",
 		"TXMSG_JOIN",
 		"TXMSG_TID_OK",
-		"TXMSG_TID_IN_USE",
+		"TXMSG_TID_BAD",
 		"TXMSG_COMMIT_REQUEST",
 		"TXMSG_COMMIT_CRASH_REQUEST",
 		"TXMSG_ABORT_REQUEST",
@@ -340,7 +340,6 @@ static void newValue(const void* src, void* logOld, void* logNew, void* realDst,
 		if (!((log->log.oldSaved >> bitInd) & 1)) {
 			memcpy(logOld, realDst, len);
 			log->log.oldSaved = log->log.oldSaved | (1 << bitInd);
-			// todo set bit
 		}
 		memcpy(realDst, src, len);
 		memcpy(logNew, src, len);
@@ -421,7 +420,7 @@ static void handleMessage(const managerType* msg) {
 				setWorkerState(WTX_IN_PROGRESS);
 			}
 			break;
-		case TXMSG_TID_IN_USE:
+		case TXMSG_TID_BAD:
 			if (currState() == WTX_INITIATED) {
 				latestResponseTime = 0;
 				printf("Bad TID %u\n", msg->tid);
