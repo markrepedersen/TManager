@@ -454,6 +454,7 @@ static void respondVote() {
 	if (crashAfterDelay) _exit(EXIT_SUCCESS);
 	const managerType msg = { log->log.txID, delayedVoteValue };
 	sendMessage(&msg);
+	printf("Voted in transaction %d: %s\n", log->log.txID, getManagerTypeString(delayedVoteValue));
 	rePollTime = time(NULL) + DECISION_TIME_LIMIT;
 }
 
