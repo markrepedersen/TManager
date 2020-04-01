@@ -332,12 +332,10 @@ void processBegin(managerType *message, struct sockaddr_in *client) {
     for (int i = 0; i < MAX_TX; ++i) {
       if (txlog->transaction[i].tstate == TX_NOTINUSE) {
         txlog->transaction[i].txID = message->tid;
-        txlog->transaction[i]
-            .workers[txlog->transaction[i].numWorkers++]
-            .client = *client;
-        txlog->transaction[i]
-            .workers[txlog->transaction[i].numWorkers++]
-            .initialized = 1;
+        worker* w = &txlog->transaction[i]
+            .workers[txlog->transaction[i].numWorkers++];
+        w->client = *client;
+        w->initialized = 1;
         break;
       }
     }
@@ -354,9 +352,10 @@ void processJoin(managerType *message, struct sockaddr_in *client) {
     sendMessage(message, client);
     for (int i = 0; i < MAX_TX; ++i) {
       if (txlog->transaction[i].txID == message->tid) {
-        txlog->transaction[i]
-            .workers[txlog->transaction[i].numWorkers++]
-            .client = *client;
+        worker* w = &txlog->transaction[i]
+            .workers[txlog->transaction[i].numWorkers++];
+        w->client = *client;
+        w->initialized = 1;
         break;
       }
     }
