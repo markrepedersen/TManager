@@ -339,6 +339,8 @@ static void newValue(const void* src, void* logOld, void* logNew, void* realDst,
 		// save old value if not already saved
 		if (!((log->log.oldSaved >> bitInd) & 1)) {
 			memcpy(logOld, realDst, len);
+			log->log.oldSaved = log->log.oldSaved | (1 << bitInd);
+			// todo set bit
 		}
 		memcpy(realDst, src, len);
 		memcpy(logNew, src, len);
@@ -461,8 +463,9 @@ static void checkTimers() {
 	if (latestResponseTime) {
 		if (now > latestResponseTime) {
 			printf("Response timeout for transaction %lu.\n", log->log.txID);
-			latestResponseTime = 0;
-			if (currState() == WTX_INITIATED) setWorkerState(WTX_NOTACTIVE);
+			abortTransaction();
+			// latestResponseTime = 0;
+			// if (currState() == WTX_INITIATED) setWorkerState(WTX_NOTACTIVE);
 		}
 	}
 	if (rePollTime) {
