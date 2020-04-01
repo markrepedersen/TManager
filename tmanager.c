@@ -331,6 +331,7 @@ void processBegin(managerType *message, struct sockaddr_in *client) {
         txlog->transaction[i]
             .workers[txlog->transaction[i].numWorkers++]
             .client = *client;
+	break;
       }
     }
     setTransactionState(message->tid, TX_INPROGRESS);
@@ -349,6 +350,7 @@ void processJoin(managerType *message, struct sockaddr_in *client) {
         txlog->transaction[i]
             .workers[txlog->transaction[i].numWorkers++]
             .client = *client;
+	break;
       }
     }
   }
