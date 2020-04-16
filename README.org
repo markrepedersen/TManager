@@ -1,0 +1,9 @@
+* Abstract 
+An implementation of a distributed transaction manager. The transaction manager manages transaction between its nodes.
+
+* Usage
+#+begin_src bash
+make 
+./tmanager <manager port>
+./tworker <command port> <worker port>
+#+end_src
